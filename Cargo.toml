@@ -11,3 +11,4 @@ ff = "0.12"
 group = "0.12"
 num-bigint-dig = { version = "0.8", features = ["rand"] }
 rand = "0.8.4"
+sha2 = "0.10"
