@@ -1,8 +1,11 @@
 use ff::{Field, PrimeField};
-use group::Group;
-use num_bigint_dig::{RandBigInt};
-use rand;
-use std::{marker::PhantomData};
+use group::{Group, GroupOps, GroupOpsOwned, ScalarMul, ScalarMulOwned};
+use num_bigint_dig::{RandBigInt, ToBigInt, ToBigUint};
+use rand::{self, CryptoRng};
+use std::marker::PhantomData;
+use std::ops::{Add, Mul, Neg, Sub};
+
+use elliptic_curve::generic_array::GenericArray;
 
 /// BITLEN_CHALLENGE represents the bitlength of the challenge.
 const BITLEN_CHALLENGE: usize = 128;
@@ -14,12 +17,12 @@ const BITLEN_WITNESS: usize = 112;
 /// Higher values mean the protocol is less likely to fail.
 const BITLEN_FAILURE: usize = 12;
 
-pub struct DLEqProver<Gp: Group, Gq: Group> {
+pub struct DLEqProver<Gp: MyGroup, Gq: MyGroup> {
     phantom_p: PhantomData<Gp>,
     phantom_q: PhantomData<Gq>,
 }
 
-pub struct DLEqProof<Gp: Group, Gq: Group> {
+pub struct DLEqProof<Gp: MyGroup, Gq: MyGroup> {
     // TODO: add range proof
     pub Kp: Gp,
     pub Kq: Gq,
@@ -28,7 +31,35 @@ pub struct DLEqProof<Gp: Group, Gq: Group> {
     // pub sq: Gq::Scalar,
 }
 
-impl<Gp: Group, Gq: Group> DLEqProver<Gp, Gq> {
+pub trait MyGroup:
+    Clone
+    + Copy
+    + Eq
+    + Sized
+    + Send
+    + Sync
+    + 'static
+    + Add
+    + GroupOps
+    + GroupOpsOwned
+    + ScalarMul<Self::Scalar>
+    + ScalarMulOwned<Self::Scalar>
+{
+    type Scalar: MyField;
+    /// Basepoint
+    fn generator() -> Self;
+    /// Alt basepoint
+    fn alt_generator() -> Self;
+}
+
+pub trait MyField:
+    Sized + Eq + Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self> + Neg<Output = Self>
+{
+    fn from_be_bytes(_: &[u8]) -> Self;
+    fn random<R: CryptoRng>(_: R) -> Self;
+}
+
+impl<Gp: MyGroup, Gq: MyGroup> DLEqProver<Gp, Gq> {
     pub fn new() -> DLEqProver<Gp, Gq> {
         DLEqProver::<Gp, Gq> {
             phantom_p: PhantomData,
@@ -38,25 +69,28 @@ impl<Gp: Group, Gq: Group> DLEqProver<Gp, Gq> {
 
     // x's type should be of the field with a smaller order.
     pub fn prove<P: PrimeField, F: Field>(x: &P) -> DLEqProof<Gp, Gq> {
-        // let k: F;
-        // // TODO: k is actually from 1..2^(sum of bitlens) - 1
-        // if Gp::Scalar::NUM_BITS < Gq::Scalar::NUM_BITS {
-        //     k = Gp::Scalar::random(r);
-        // } else {
-        //     k = Gq::Scalar::random(r);
-        // }
-
-        let k_max = 2 ** (BITLEN_CHALLENGE + BITLEN_WITNESS + BITLEN_FAILURE); // this should be a bigint
-        let one = 1.to_biguint().unwrap();
+        let one = 1_i32.to_biguint().unwrap();
+        let two = 2_i32.to_biguint().unwrap();
+        let pow = (BITLEN_CHALLENGE + BITLEN_WITNESS + BITLEN_FAILURE)
+            .to_biguint()
+            .unwrap();
+        let k_max = two.modpow(&pow, &one); // this should be a bigint
         let mut rng = rand::thread_rng();
-        let r = rng.gen_biguint_range(&one, &(&k_max - &one));
+        let k_biguint = rng.gen_biguint_range(&one, &(&k_max - &one));
 
-        let tp = Gp::Scalar::random(r);
-        let tq = Gq::Scalar::random(r);
+        let tp = Gp::Scalar::random(&mut rng);
+        let tq = Gq::Scalar::random(&mut rng);
+
+        let k = k_biguint.to_bytes_be();
+        let kp = Gp::Scalar::from_be_bytes(&k);
+        let kq = Gq::Scalar::from_be_bytes(&k);
+
+        let Kp = Gp::generator() * kp + Gp::alt_generator() * tp;
+        let Kq = Gq::generator() * kq + Gq::alt_generator() * tq;
 
         DLEqProof {
-            // Kp: (),
-            // Kq: (),
+            Kp: Kp,
+            Kq: Kq,
             // z: (),
             // sp: (),
             // sq: (),

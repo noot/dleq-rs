@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+elliptic-curve = { version = "0.12" }
 ff = "0.12"
 group = "0.12"
 num-bigint-dig = { version = "0.8", features = ["rand"] }
