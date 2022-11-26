@@ -9,6 +9,13 @@ use crate::dleq::{
     BITLEN_FAILURE, BITLEN_WITNESS,
 };
 
+/// LargeWitnessDLEqProof is a proof for a witness with bitlength > BITLEN_WITNESS.
+pub struct LargeWitnessDLEqProof<Gp: DLEqGroup, Gq: DLEqGroup> {
+    // TODO: add summed commitments? not sure if it's necessary,
+    // since we already sum them up to generate the challenge.
+    proofs: Vec<DLEqProof<Gp, Gq>>,
+}
+
 #[allow(non_snake_case)]
 struct DLEqProofIntermediate<Gp: DLEqGroup, Gq: DLEqGroup> {
     pub k: U256,
@@ -29,12 +36,12 @@ struct DLEqProofIntermediate<Gp: DLEqGroup, Gq: DLEqGroup> {
 }
 
 impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
-    pub fn prove_private_key(&self, x: &[u8; 32]) -> Vec<DLEqProof<Gp, Gq>> {
+    pub fn prove_large_witness(&self, x: &[u8; 32]) -> LargeWitnessDLEqProof<Gp, Gq> {
         self.prove_chunks(&chunkify(x))
     }
 
     #[allow(non_snake_case)]
-    fn prove_chunks(&self, x_chunks: &[[u8; 8]; 4]) -> Vec<DLEqProof<Gp, Gq>> {
+    fn prove_chunks(&self, x_chunks: &[[u8; 8]; 4]) -> LargeWitnessDLEqProof<Gp, Gq> {
         let mut proofs = Vec::<DLEqProof<Gp, Gq>>::new();
 
         // part one: this is the part of the protocol up until and including challenge and `z` value calculation.
@@ -95,7 +102,7 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
             })
         }
 
-        proofs
+        LargeWitnessDLEqProof { proofs }
     }
 
     #[allow(non_snake_case)]
@@ -149,6 +156,26 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
     }
 }
 
+impl<Gp: DLEqGroup, Gq: DLEqGroup> LargeWitnessDLEqProof<Gp, Gq> {
+    #[allow(non_snake_case)]
+    pub fn verify(&self) -> bool {
+        // generate c from all the proofs, calculate z, and check it
+        let Kps: Vec<<Gp as DLEqGroup>::GroupElement> = self.proofs.iter().map(|i| i.Kp).collect();
+        let Kqs: Vec<<Gq as DLEqGroup>::GroupElement> = self.proofs.iter().map(|i| i.Kq).collect();
+        let Xps: Vec<<Gp as DLEqGroup>::GroupElement> = self.proofs.iter().map(|i| i.Xp).collect();
+        let Xqs: Vec<<Gq as DLEqGroup>::GroupElement> = self.proofs.iter().map(|i| i.Xq).collect();
+        let c = challenge_from_many::<Gp, Gq>(Kps, Kqs, Xps, Xqs);
+
+        for proof in self.proofs.iter() {
+            if !proof.verify_with_commitment(c) {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
 #[allow(non_snake_case)]
 fn challenge_from_many<Gp: DLEqGroup, Gq: DLEqGroup>(
     Kps: Vec<<Gp as DLEqGroup>::GroupElement>,
@@ -175,24 +202,6 @@ fn chunkify(v: &[u8; 32]) -> [[u8; 8]; 4] {
     res
 }
 
-#[allow(non_snake_case)]
-pub fn verify_private_key<Gp: DLEqGroup, Gq: DLEqGroup>(proofs: Vec<DLEqProof<Gp, Gq>>) -> bool {
-    // generate c from all the proofs, calculate z, and check it
-    let Kps: Vec<<Gp as DLEqGroup>::GroupElement> = proofs.iter().map(|i| i.Kp).collect();
-    let Kqs: Vec<<Gq as DLEqGroup>::GroupElement> = proofs.iter().map(|i| i.Kq).collect();
-    let Xps: Vec<<Gp as DLEqGroup>::GroupElement> = proofs.iter().map(|i| i.Xp).collect();
-    let Xqs: Vec<<Gq as DLEqGroup>::GroupElement> = proofs.iter().map(|i| i.Xq).collect();
-    let c = challenge_from_many::<Gp, Gq>(Kps, Kqs, Xps, Xqs);
-
-    for proof in proofs.iter() {
-        if !proof.verify_with_commitment(c) {
-            return false;
-        }
-    }
-
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,13 +210,13 @@ mod tests {
     use rand::{self, RngCore};
 
     #[test]
-    fn dleq_prove_and_verify_private_key() {
+    fn dleq_prove_and_verify_large_witness() {
         let mut x = [0u8; 32];
         let r = &mut rand::thread_rng();
         r.fill_bytes(&mut x);
 
         let prover = DLEqProver::<Ed25519Group, Secp256k1Group>::new();
-        let proofs = prover.prove_private_key(&x);
-        assert!(verify_private_key(proofs));
+        let proof = prover.prove_large_witness(&x);
+        assert!(proof.verify());
     }
 }
