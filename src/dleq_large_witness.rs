@@ -10,11 +10,14 @@ use crate::dleq::{
 };
 use crate::range_proof::generate_range_proof;
 
+#[allow(non_snake_case)]
 /// LargeWitnessDLEqProof is a proof for a witness with bitlength > BITLEN_WITNESS.
 pub struct LargeWitnessDLEqProof<Gp: DLEqGroup, Gq: DLEqGroup> {
-    // TODO: add summed commitments? not sure if it's necessary,
-    // since we already sum them up to generate the challenge.
-    // I guess end users probably need the commitment though lol
+    /// commitment xG + rH in Gp
+    pub Xp: Gp::GroupElement,
+    /// commitment xG + rH in Gq
+    pub Xq: Gq::GroupElement,
+
     proofs: Vec<DLEqProof<Gp, Gq>>,
 }
 
@@ -39,6 +42,7 @@ struct DLEqProofIntermediate<Gp: DLEqGroup, Gq: DLEqGroup> {
 
 impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
     pub fn prove_large_witness(&self, x: &[u8; 32]) -> LargeWitnessDLEqProof<Gp, Gq> {
+        // TODO: check that the witness isn't actually larger than min(order(Gp), order(Gq))
         self.prove_chunks(&chunkify(x))
     }
 
@@ -47,7 +51,7 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
         let mut proofs = Vec::<DLEqProof<Gp, Gq>>::new();
 
         // part one: this is the part of the protocol up until and including challenge and `z` value calculation.
-        let (intermediates, cp, cq) = loop {
+        let (intermediates, Xp, Xq, cp, cq) = loop {
             let mut intermediates = Vec::<DLEqProofIntermediate<Gp, Gq>>::new();
 
             for i in 0..4 {
@@ -63,7 +67,7 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
                 intermediates.iter().map(|i| i.Xp).collect();
             let Xqs: Vec<<Gq as DLEqGroup>::GroupElement> =
                 intermediates.iter().map(|i| i.Xq).collect();
-            let c = challenge_from_many::<Gp, Gq>(Kps, Kqs, Xps, Xqs);
+            let (c, Xp, Xq) = challenge_from_many::<Gp, Gq>(Kps, Kqs, Xps, Xqs);
 
             let cp = Gp::Field::from_be_bytes(&c.to_be_byte_array());
             let cq = Gq::Field::from_be_bytes(&c.to_be_byte_array());
@@ -84,7 +88,7 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
                 intermediates[i].z = z;
             }
 
-            break (intermediates, cp, cq);
+            break (intermediates, Xp, Xq, cp, cq);
         };
 
         // part two: calculate s values and we're done!!
@@ -104,7 +108,7 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
             })
         }
 
-        LargeWitnessDLEqProof { proofs }
+        LargeWitnessDLEqProof { proofs, Xp, Xq }
     }
 
     #[allow(non_snake_case)]
@@ -166,7 +170,12 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> LargeWitnessDLEqProof<Gp, Gq> {
         let Kqs: Vec<<Gq as DLEqGroup>::GroupElement> = self.proofs.iter().map(|i| i.Kq).collect();
         let Xps: Vec<<Gp as DLEqGroup>::GroupElement> = self.proofs.iter().map(|i| i.Xp).collect();
         let Xqs: Vec<<Gq as DLEqGroup>::GroupElement> = self.proofs.iter().map(|i| i.Xq).collect();
-        let c = challenge_from_many::<Gp, Gq>(Kps, Kqs, Xps, Xqs);
+        let (c, Xp, Xq) = challenge_from_many::<Gp, Gq>(Kps, Kqs, Xps, Xqs);
+
+        // check that sub-commitments sum to main commitment
+        if Xp != self.Xp || Xq != self.Xq {
+            return false;
+        }
 
         for proof in self.proofs.iter() {
             if !proof.verify_with_commitment(c) {
@@ -184,7 +193,7 @@ fn challenge_from_many<Gp: DLEqGroup, Gq: DLEqGroup>(
     Kqs: Vec<<Gq as DLEqGroup>::GroupElement>,
     Xps: Vec<<Gp as DLEqGroup>::GroupElement>,
     Xqs: Vec<<Gq as DLEqGroup>::GroupElement>,
-) -> U256 {
+) -> (U256, Gp::GroupElement, Gq::GroupElement) {
     let Kp: <Gp as DLEqGroup>::GroupElement = Kps[1..].iter().fold(Kps[0], |acc, x| acc + *x);
 
     let Kq: <Gq as DLEqGroup>::GroupElement = Kqs[1..].iter().fold(Kqs[0], |acc, x| acc + *x);
@@ -193,7 +202,7 @@ fn challenge_from_many<Gp: DLEqGroup, Gq: DLEqGroup>(
 
     let Xq: <Gq as DLEqGroup>::GroupElement = Xqs[1..].iter().fold(Xqs[0], |acc, x| acc + *x);
 
-    challenge::<Gp, Gq>(Kp, Kq, Xp, Xq)
+    (challenge::<Gp, Gq>(Kp, Kq, Xp, Xq), Xp, Xq)
 }
 
 fn chunkify(v: &[u8; 32]) -> [[u8; 8]; 4] {

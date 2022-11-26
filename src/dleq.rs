@@ -226,13 +226,11 @@ mod tests {
     use super::*;
     use crate::{ed25519::Ed25519Group, secp256k1::Secp256k1Group};
 
-    use crypto_bigint::Encoding;
+    use crypto_bigint::{Encoding, Random};
 
     #[test]
     fn dleq_prove_and_verify() {
-        let modulus = NonZero::new(U64::MAX).unwrap();
-        let x = U64::random_mod(&mut OsRng, &modulus);
-
+        let x = U64::random(&mut OsRng);
         let prover = DLEqProver::<Ed25519Group, Secp256k1Group>::new();
         let proof = prover.prove(&x.to_be_bytes());
         assert!(proof.verify());
