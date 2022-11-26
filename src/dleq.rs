@@ -1,6 +1,6 @@
 use crypto_bigint::{
-    generic_array::GenericArray, rand_core::OsRng, ArrayEncoding, NonZero, RandomMod, UInt,
-    Wrapping, U256,
+    generic_array::GenericArray, rand_core::OsRng, ArrayEncoding, Encoding, NonZero, RandomMod,
+    UInt, Wrapping, U256, U64,
 };
 use group::{GroupOps, ScalarMul};
 use rand::{self, CryptoRng, RngCore};
@@ -78,14 +78,16 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
 
     /// prove generates a DLEq proof for a value 0 < x < 2 ** BITLEN_WITNESS - 1.
     #[allow(non_snake_case)]
-    pub fn prove(&self, x: &[u8; 32]) -> DLEqProof<Gp, Gq> {
+    pub fn prove(&self, x: &[u8; 8]) -> DLEqProof<Gp, Gq> {
         // verify 0 < x < 2 ** BITLEN_WITNESS
-        let x_uint = U256::from_be_byte_array(*GenericArray::from_slice(x));
-        let upper_bound = NonZero::new(U256::ONE.shl_vartime(BITLEN_WITNESS)).unwrap();
-        assert!(x_uint > U256::from(0u8) && x_uint < *upper_bound);
+        let x_uint = U64::from_be_byte_array(*GenericArray::from_slice(x));
+        assert!(x_uint > U64::from(0u8) && x_uint < U64::MAX);
 
-        let xp = Gp::Field::from_be_bytes(x);
-        let xq = Gq::Field::from_be_bytes(x);
+        let mut x_bytes = [0u8; 32];
+        x_bytes[24..].copy_from_slice(x);
+
+        let xp = Gp::Field::from_be_bytes(&x_bytes);
+        let xq = Gq::Field::from_be_bytes(&x_bytes);
 
         // calculate modulus for k value
         let pow = BITLEN_CHALLENGE + BITLEN_WITNESS + BITLEN_FAILURE;
@@ -116,7 +118,7 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
             let cp = Gp::Field::from_be_bytes(&c.to_be_byte_array());
             let cq = Gq::Field::from_be_bytes(&c.to_be_byte_array());
 
-            let z = Wrapping(k) + (Wrapping(c) * Wrapping(x_uint));
+            let z = Wrapping(k) + (Wrapping(c) * Wrapping(U256::from_be_bytes(x_bytes)));
             let z = z.0;
 
             if check_z(&z) {
@@ -227,8 +229,8 @@ mod tests {
 
     #[test]
     fn dleq_prove_and_verify() {
-        let modulus = NonZero::new(U256::ONE.shl_vartime(BITLEN_WITNESS)).unwrap();
-        let x = U256::random_mod(&mut OsRng, &modulus);
+        let modulus = NonZero::new(U64::MAX).unwrap();
+        let x = U64::random_mod(&mut OsRng, &modulus);
 
         let prover = DLEqProver::<Ed25519Group, Secp256k1Group>::new();
         let proof = prover.prove(&x.to_be_bytes());
