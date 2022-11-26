@@ -1,6 +1,6 @@
 # Cross-Group Discrete Logarithm Equality
 
-This repo contains an implementation of Cross-Group DLEq proofs as specified [here](https://eprint.iacr.org/2022/1593.pdf). The protocol implemented is the non-interactive Fiat-Shamir'd version of the protocol described in the paper. Additionally, the extension in section 5 which allows for values larger than `BITLEN_WITNESS` to be proven.
+This repo contains an implementation of Cross-Group DLEq proofs as specified [here](https://eprint.iacr.org/2022/1593.pdf). The protocol implemented is the non-interactive Fiat-Shamir'd version of the protocol described in the paper. Additionally, the extension in section 5 which allows for values larger than `BITLEN_WITNESS` to be proven is also implemented.
 
 This is not production-ready, I wrote this for learning purposes only. It has a lot of `unwraps()` :D 
 
