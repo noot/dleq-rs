@@ -95,6 +95,24 @@ struct DLEqProofIntermediate<Gp: DLEqGroup, Gq: DLEqGroup> {
     pub z: U256,
 }
 
+#[allow(non_snake_case)]
+fn challenge_from_many<Gp: DLEqGroup, Gq: DLEqGroup>(
+    Kps: Vec<<Gp as DLEqGroup>::GroupElement>,
+    Kqs: Vec<<Gq as DLEqGroup>::GroupElement>,
+    Xps: Vec<<Gp as DLEqGroup>::GroupElement>,
+    Xqs: Vec<<Gq as DLEqGroup>::GroupElement>,
+) -> U256 {
+    let Kp: <Gp as DLEqGroup>::GroupElement = Kps[1..].iter().fold(Kps[0], |acc, x| acc + *x);
+
+    let Kq: <Gq as DLEqGroup>::GroupElement = Kqs[1..].iter().fold(Kqs[0], |acc, x| acc + *x);
+
+    let Xp: <Gp as DLEqGroup>::GroupElement = Xps[1..].iter().fold(Xps[0], |acc, x| acc + *x);
+
+    let Xq: <Gq as DLEqGroup>::GroupElement = Xqs[1..].iter().fold(Xqs[0], |acc, x| acc + *x);
+
+    challenge::<Gp, Gq>(Kp, Kq, Xp, Xq)
+}
+
 impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
     pub fn new() -> DLEqProver<Gp, Gq> {
         DLEqProver::<Gp, Gq> {
@@ -123,25 +141,13 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
             // this is kinda cursed, there's definitely a cleaner way to write this
             let Kps: Vec<<Gp as DLEqGroup>::GroupElement> =
                 intermediates.iter().map(|i| i.Kp).collect();
-            let Kp: <Gp as DLEqGroup>::GroupElement =
-                Kps[1..].iter().fold(Kps[0], |acc, x| acc + *x);
-
             let Kqs: Vec<<Gq as DLEqGroup>::GroupElement> =
                 intermediates.iter().map(|i| i.Kq).collect();
-            let Kq: <Gq as DLEqGroup>::GroupElement =
-                Kqs[1..].iter().fold(Kqs[0], |acc, x| acc + *x);
-
             let Xps: Vec<<Gp as DLEqGroup>::GroupElement> =
                 intermediates.iter().map(|i| i.Xp).collect();
-            let Xp: <Gp as DLEqGroup>::GroupElement =
-                Xps[1..].iter().fold(Xps[0], |acc, x| acc + *x);
-
             let Xqs: Vec<<Gq as DLEqGroup>::GroupElement> =
                 intermediates.iter().map(|i| i.Xq).collect();
-            let Xq: <Gq as DLEqGroup>::GroupElement =
-                Xqs[1..].iter().fold(Xqs[0], |acc, x| acc + *x);
-
-            let c = challenge::<Gp, Gq>(Kp, Kq, Xp, Xq);
+            let c = challenge_from_many::<Gp, Gq>(Kps, Kqs, Xps, Xqs);
 
             let cp = Gp::Field::from_be_bytes(&c.to_be_byte_array());
             let cq = Gq::Field::from_be_bytes(&c.to_be_byte_array());
@@ -149,11 +155,13 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
             // finally check all z values
             // if they're all ok, then break from the loop
             for i in 0..4 {
-                let x_uint = U256::from_be_byte_array(*GenericArray::from_slice(&x_chunks[i]));
+                let mut x_bytes = [0u8; 32];
+                x_bytes[24..].copy_from_slice(&x_chunks[i]);
+                let x_uint = U256::from_be_byte_array(*GenericArray::from_slice(&x_bytes));
                 let z = Wrapping(intermediates[i].k) + (Wrapping(c) * Wrapping(x_uint));
                 let z = z.0;
 
-                if check_z(&z) {
+                if !check_z(&z) {
                     continue;
                 }
 
@@ -185,12 +193,14 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
     #[allow(non_snake_case)]
     fn proof_step_one(&self, x: &[u8]) -> DLEqProofIntermediate<Gp, Gq> {
         // verify 0 < x < 2 ** BITLEN_WITNESS
-        let x_uint = U256::from_be_byte_array(*GenericArray::from_slice(x));
+        let mut x_bytes = [0u8; 32];
+        x_bytes[24..].copy_from_slice(&x);
+        let x_uint = U256::from_be_byte_array(*GenericArray::from_slice(&x_bytes));
         let upper_bound = NonZero::new(U256::ONE.shl_vartime(BITLEN_WITNESS)).unwrap();
         assert!(x_uint > U256::from(0u8) && x_uint < *upper_bound);
 
-        let xp = Gp::Field::from_be_bytes(x);
-        let xq = Gq::Field::from_be_bytes(x);
+        let xp = Gp::Field::from_be_bytes(&x_bytes);
+        let xq = Gq::Field::from_be_bytes(&x_bytes);
 
         // calculate modulus for k value
         let pow = BITLEN_CHALLENGE + BITLEN_WITNESS + BITLEN_FAILURE;
@@ -230,8 +240,9 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
         }
     }
 
+    /// prove generates a DLEq proof for a value 0 < x < 2 ** BITLEN_WITNESS - 1.
     #[allow(non_snake_case)]
-    pub fn prove(&self, x: &[u8]) -> DLEqProof<Gp, Gq> {
+    pub fn prove(&self, x: &[u8; 32]) -> DLEqProof<Gp, Gq> {
         // verify 0 < x < 2 ** BITLEN_WITNESS
         let x_uint = U256::from_be_byte_array(*GenericArray::from_slice(x));
         let upper_bound = NonZero::new(U256::ONE.shl_vartime(BITLEN_WITNESS)).unwrap();
@@ -293,16 +304,33 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
     }
 }
 
+#[allow(non_snake_case)]
+pub fn verify_private_key<Gp: DLEqGroup, Gq: DLEqGroup>(proofs: Vec<DLEqProof<Gp, Gq>>) -> bool {
+    // generate c from all the proofs, calculate z, and check it
+    let Kps: Vec<<Gp as DLEqGroup>::GroupElement> = proofs.iter().map(|i| i.Kp).collect();
+    let Kqs: Vec<<Gq as DLEqGroup>::GroupElement> = proofs.iter().map(|i| i.Kq).collect();
+    let Xps: Vec<<Gp as DLEqGroup>::GroupElement> = proofs.iter().map(|i| i.Xp).collect();
+    let Xqs: Vec<<Gq as DLEqGroup>::GroupElement> = proofs.iter().map(|i| i.Xq).collect();
+    let c = challenge_from_many::<Gp, Gq>(Kps, Kqs, Xps, Xqs);
+
+    for proof in proofs.iter() {
+        if !proof.verify_with_commitment(c) {
+            return false;
+        }
+    }
+
+    true
+}
+
 impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProof<Gp, Gq> {
-    pub fn verify(&self) -> bool {
-        // verify range proof
-        // if !self.range_proof.verify() {
-        //     return false;
-        // }
+    #[allow(non_snake_case)]
+    pub fn verify_public_keys(&self, _: Gp::GroupElement, _: Gq::GroupElement) -> bool {
+        // TODO: check whether the proof commits to the given public keys
+        // by checking cP = zG - kG
+        self.verify()
+    }
 
-        // recompute challenge
-        let c = challenge::<Gp, Gq>(self.Kp, self.Kq, self.Xp, self.Xq);
-
+    pub fn verify_with_commitment(&self, c: U256) -> bool {
         let cp = Gp::Field::from_be_bytes(&c.to_be_byte_array());
         let cq = Gq::Field::from_be_bytes(&c.to_be_byte_array());
 
@@ -325,6 +353,17 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProof<Gp, Gq> {
 
         // 3. check z
         check_z(&self.z)
+    }
+
+    pub fn verify(&self) -> bool {
+        // verify range proof
+        // if !self.range_proof.verify() {
+        //     return false;
+        // }
+
+        // recompute challenge
+        let c = challenge::<Gp, Gq>(self.Kp, self.Kq, self.Xp, self.Xq);
+        self.verify_with_commitment(c)
     }
 }
 
@@ -375,6 +414,17 @@ mod tests {
 
         let prover = DLEqProver::<Ed25519Group, Secp256k1Group>::new();
         let proof = prover.prove(&x.to_be_bytes());
-        assert!(proof.verify())
+        assert!(proof.verify());
+    }
+
+    #[test]
+    fn dleq_prove_and_verify_private_key() {
+        let mut x = [0u8; 32];
+        let r = &mut rand::thread_rng();
+        r.fill_bytes(&mut x);
+
+        let prover = DLEqProver::<Ed25519Group, Secp256k1Group>::new();
+        let proofs = prover.prove_private_key(&x);
+        assert!(verify_private_key(proofs));
     }
 }
