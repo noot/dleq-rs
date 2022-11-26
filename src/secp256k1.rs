@@ -17,7 +17,7 @@ impl DLEqGroup for Secp256k1Group {
     fn generator() -> Self::GroupElement {
         k256::ProjectivePoint::GENERATOR
     }
-    /// Alt basepoint
+
     fn alt_generator() -> Self::GroupElement {
         // https://github.com/mimblewimble/rust-secp256k1-zkp/blob/ed4297b0e3dba9b0793aab340c7c81cda6460bcf/src/constants.rs#L97
         ProjectivePoint::from_bytes(&GenericArray::from_slice(&hex!(
@@ -25,6 +25,7 @@ impl DLEqGroup for Secp256k1Group {
         )))
         .unwrap()
     }
+
     fn to_bytes_be(p: Self::GroupElement) -> Vec<u8> {
         p.to_bytes().to_vec()
     }

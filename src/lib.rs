@@ -1,6 +1,7 @@
 use crypto_bigint::ArrayEncoding;
-use crypto_bigint::{rand_core::OsRng, NonZero, RandomMod, UInt, Wrapping, U256};
-use generic_array::GenericArray;
+use crypto_bigint::{
+    generic_array::GenericArray, rand_core::OsRng, NonZero, RandomMod, UInt, Wrapping, U256,
+};
 use group::{GroupOps, ScalarMul};
 use rand::{self, CryptoRng, RngCore};
 use sha2::{Digest, Sha256};
@@ -8,6 +9,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::ops::{Add, Mul};
 
+pub mod ed25519;
 pub mod secp256k1;
 
 /// BITLEN_CHALLENGE represents the bitlength of the challenge.
@@ -50,9 +52,7 @@ pub trait DLEqGroup {
         + GroupOps
         + ScalarMul<<Self::Field as DLEqField>::Scalar>;
     type Field: DLEqField;
-    /// Basepoint
     fn generator() -> Self::GroupElement;
-    /// Alt basepoint
     fn alt_generator() -> Self::GroupElement;
     fn to_bytes_be(_: Self::GroupElement) -> Vec<u8>;
 }
@@ -145,14 +145,14 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProof<Gp, Gq> {
         let zp = Gp::Field::from_be_bytes(&self.z.to_be_byte_array());
         let zq = Gq::Field::from_be_bytes(&self.z.to_be_byte_array());
 
-        // 1. check Gp
+        // 1. check Gp values
         let lhs = (Gp::generator() * zp) + (Gp::alt_generator() * self.sp);
         let rhs = self.Kp + (self.Xp * cp);
         if lhs != rhs {
             return false;
         }
 
-        // 2. check G
+        // 2. check Gq values
         let lhs = Gq::generator() * zq + Gq::alt_generator() * self.sq;
         let rhs = self.Kq + self.Xq * cq;
         if lhs != rhs {
@@ -200,7 +200,7 @@ fn check_z(z: &U256) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::secp256k1::Secp256k1Group;
+    use crate::{ed25519::Ed25519Group, secp256k1::Secp256k1Group};
 
     use crypto_bigint::Encoding;
 
@@ -209,7 +209,7 @@ mod tests {
         let modulus = NonZero::new(U256::ONE.shl_vartime(BITLEN_WITNESS)).unwrap();
         let x = U256::random_mod(&mut OsRng, &modulus);
 
-        let prover = DLEqProver::<Secp256k1Group, Secp256k1Group>::new();
+        let prover = DLEqProver::<Ed25519Group, Secp256k1Group>::new();
         let proof = prover.prove(&x.to_be_bytes());
         assert!(proof.verify())
     }
