@@ -3,7 +3,7 @@ use hex_literal::hex;
 use k256::{elliptic_curve::generic_array::GenericArray, *};
 use rand::{CryptoRng, RngCore};
 
-use crate::{DLEqField, DLEqGroup};
+use crate::dleq::{DLEqField, DLEqGroup};
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Secp256k1Group;
@@ -26,7 +26,7 @@ impl DLEqGroup for Secp256k1Group {
         .unwrap()
     }
 
-    fn to_bytes_be(p: Self::GroupElement) -> Vec<u8> {
+    fn to_be_bytes(p: Self::GroupElement) -> Vec<u8> {
         p.to_bytes().to_vec()
     }
 }

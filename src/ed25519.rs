@@ -6,7 +6,7 @@ use curve25519_dalek::{
 use hex_literal::hex;
 use rand::{CryptoRng, RngCore};
 
-use crate::{DLEqField, DLEqGroup};
+use crate::dleq::{DLEqField, DLEqGroup};
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Ed25519Group;
@@ -30,7 +30,7 @@ impl DLEqGroup for Ed25519Group {
         .unwrap()
     }
 
-    fn to_bytes_be(p: Self::GroupElement) -> Vec<u8> {
+    fn to_be_bytes(p: Self::GroupElement) -> Vec<u8> {
         p.compress().to_bytes().to_vec()
     }
 }
