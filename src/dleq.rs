@@ -11,7 +11,7 @@ use std::{
     ops::{Add, Mul},
 };
 
-//use crate::range_proof::{Proof, generate_range_proof};
+use crate::range_proof::{generate_range_proof, Proof};
 
 /// BITLEN_CHALLENGE represents the bitlength of the challenge.
 pub const BITLEN_CHALLENGE: usize = 128;
@@ -31,13 +31,14 @@ pub struct DLEqProver<Gp: DLEqGroup, Gq: DLEqGroup> {
 
 #[allow(non_snake_case)]
 pub struct DLEqProof<Gp: DLEqGroup, Gq: DLEqGroup> {
-    //range_proof: Proof,
-    pub Kp: Gp::GroupElement,
-    pub Kq: Gq::GroupElement,
+    pub(crate) range_proof: Proof,
 
-    pub z: U256,
-    pub sp: <<Gp as DLEqGroup>::Field as DLEqField>::Scalar,
-    pub sq: <<Gq as DLEqGroup>::Field as DLEqField>::Scalar,
+    pub(crate) Kp: Gp::GroupElement,
+    pub(crate) Kq: Gq::GroupElement,
+
+    pub(crate) z: U256,
+    pub(crate) sp: <<Gp as DLEqGroup>::Field as DLEqField>::Scalar,
+    pub(crate) sq: <<Gq as DLEqGroup>::Field as DLEqField>::Scalar,
 
     pub Xp: Gp::GroupElement, // commitment xG + rH in Gp
     pub Xq: Gq::GroupElement, // commitment xG + rH in Gq
@@ -130,7 +131,7 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
         let sq = tq + (cq * rq);
 
         DLEqProof {
-            //range_proof: generate_range_proof(x_uint, BITLEN_WITNESS),
+            range_proof: generate_range_proof(&x_uint),
             Kp: Kp,
             Kq: Kq,
             z: z,
@@ -177,9 +178,9 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProof<Gp, Gq> {
 
     pub fn verify(&self) -> bool {
         // verify range proof
-        // if !self.range_proof.verify() {
-        //     return false;
-        // }
+        if !self.range_proof.verify() {
+            return false;
+        }
 
         // recompute challenge
         let c = challenge::<Gp, Gq>(self.Kp, self.Kq, self.Xp, self.Xq);

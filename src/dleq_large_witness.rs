@@ -1,6 +1,6 @@
 use crypto_bigint::{
     generic_array::GenericArray, rand_core::OsRng, ArrayEncoding, NonZero, RandomMod, Wrapping,
-    U256,
+    U256, U64,
 };
 use rand;
 
@@ -8,31 +8,33 @@ use crate::dleq::{
     challenge, check_z, DLEqField, DLEqGroup, DLEqProof, DLEqProver, BITLEN_CHALLENGE,
     BITLEN_FAILURE, BITLEN_WITNESS,
 };
+use crate::range_proof::generate_range_proof;
 
 /// LargeWitnessDLEqProof is a proof for a witness with bitlength > BITLEN_WITNESS.
 pub struct LargeWitnessDLEqProof<Gp: DLEqGroup, Gq: DLEqGroup> {
     // TODO: add summed commitments? not sure if it's necessary,
     // since we already sum them up to generate the challenge.
+    // I guess end users probably need the commitment though lol
     proofs: Vec<DLEqProof<Gp, Gq>>,
 }
 
 #[allow(non_snake_case)]
 struct DLEqProofIntermediate<Gp: DLEqGroup, Gq: DLEqGroup> {
-    pub k: U256,
+    k: U256,
 
-    pub Kp: Gp::GroupElement, // kG + tH
-    pub Kq: Gq::GroupElement, // kG + tH
+    Kp: Gp::GroupElement, // kG + tH
+    Kq: Gq::GroupElement, // kG + tH
 
-    pub Xp: Gp::GroupElement, // commitment xG + rH in Gp
-    pub Xq: Gq::GroupElement, // commitment xG + rH in Gq
+    Xp: Gp::GroupElement, // commitment xG + rH in Gp
+    Xq: Gq::GroupElement, // commitment xG + rH in Gq
 
-    pub tp: <<Gp as DLEqGroup>::Field as DLEqField>::Scalar,
-    pub tq: <<Gq as DLEqGroup>::Field as DLEqField>::Scalar,
+    tp: <<Gp as DLEqGroup>::Field as DLEqField>::Scalar,
+    tq: <<Gq as DLEqGroup>::Field as DLEqField>::Scalar,
 
-    pub rp: <<Gp as DLEqGroup>::Field as DLEqField>::Scalar,
-    pub rq: <<Gq as DLEqGroup>::Field as DLEqField>::Scalar,
+    rp: <<Gp as DLEqGroup>::Field as DLEqField>::Scalar,
+    rq: <<Gq as DLEqGroup>::Field as DLEqField>::Scalar,
 
-    pub z: U256,
+    z: U256,
 }
 
 impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
@@ -53,7 +55,6 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
             }
 
             // now generate c from all the intermediates, calculate z, and check it
-            // this is kinda cursed, there's definitely a cleaner way to write this
             let Kps: Vec<<Gp as DLEqGroup>::GroupElement> =
                 intermediates.iter().map(|i| i.Kp).collect();
             let Kqs: Vec<<Gq as DLEqGroup>::GroupElement> =
@@ -90,8 +91,9 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
         for i in 0..4 {
             let sp = intermediates[i].tp + (cp * intermediates[i].rp);
             let sq = intermediates[i].tq + (cq * intermediates[i].rq);
+            let x_uint = U64::from_be_byte_array(*GenericArray::from_slice(&x_chunks[i]));
             proofs.push(DLEqProof {
-                //range_proof: generate_range_proof(x_uint, BITLEN_WITNESS),
+                range_proof: generate_range_proof(&x_uint),
                 Kp: intermediates[i].Kp,
                 Kq: intermediates[i].Kq,
                 z: intermediates[i].z,
