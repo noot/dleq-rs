@@ -8,7 +8,10 @@ edition = "2021"
 [dependencies]
 elliptic-curve = { version = "0.12" }
 ff = "0.12"
+generic-array = "0.14.6"
 group = "0.12"
-num-bigint-dig = { version = "0.8", features = ["rand"] }
+hex-literal = "0.3.4"
+k256 = "0.11"
+crypto-bigint = { version = "0.4.9", features = ["rand", "generic-array"] }
 rand = "0.8.4"
 sha2 = "0.10"

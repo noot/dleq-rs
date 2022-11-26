@@ -1,10 +1,14 @@
-// use ff::{Field, PrimeField};
-use group::{GroupOps, GroupOpsOwned, ScalarMul, ScalarMulOwned};
-use num_bigint_dig::{BigUint, RandBigInt, ToBigUint};
-use rand::{self, CryptoRng};
+use crypto_bigint::ArrayEncoding;
+use crypto_bigint::{rand_core::OsRng, NonZero, RandomMod, UInt, Wrapping, U256};
+use generic_array::GenericArray;
+use group::{GroupOps, ScalarMul};
+use rand::{self, CryptoRng, RngCore};
 use sha2::{Digest, Sha256};
+use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, Mul};
+
+pub mod secp256k1;
 
 /// BITLEN_CHALLENGE represents the bitlength of the challenge.
 const BITLEN_CHALLENGE: usize = 128;
@@ -21,42 +25,43 @@ pub struct DLEqProver<Gp: DLEqGroup, Gq: DLEqGroup> {
     phantom_q: PhantomData<Gq>,
 }
 
+#[allow(non_snake_case)]
 pub struct DLEqProof<Gp: DLEqGroup, Gq: DLEqGroup> {
     // TODO: add range proof
-    pub Kp: Gp,
-    pub Kq: Gq,
-    pub z: BigUint,
-    pub sp: Gp::Scalar,
-    pub sq: Gq::Scalar,
+    pub Kp: Gp::GroupElement,
+    pub Kq: Gq::GroupElement,
+    pub z: U256,
+    pub sp: <<Gp as DLEqGroup>::Field as DLEqField>::Scalar,
+    pub sq: <<Gq as DLEqGroup>::Field as DLEqField>::Scalar,
+    pub Xp: Gp::GroupElement, // commitment xG + rH in Gp
+    pub Xq: Gq::GroupElement, // commitment xG + rH in Gq
 }
 
-pub trait DLEqGroup:
-    Clone
-    + Copy
-    + Eq
-    + Sized
-    + Send
-    + Sync
-    + 'static
-    + Add
-    + GroupOps
-    + GroupOpsOwned
-    + ScalarMul<Self::Scalar>
-    + ScalarMulOwned<Self::Scalar>
-{
-    type Scalar: DLEqField;
+pub trait DLEqGroup {
+    type GroupElement: Clone
+        + Copy
+        + Debug
+        + Eq
+        + Sized
+        + Send
+        + Sync
+        + 'static
+        + Add
+        + GroupOps
+        + ScalarMul<<Self::Field as DLEqField>::Scalar>;
+    type Field: DLEqField;
     /// Basepoint
-    fn generator() -> Self;
+    fn generator() -> Self::GroupElement;
     /// Alt basepoint
-    fn alt_generator() -> Self;
-    fn to_bytes_be(&self) -> Vec<u8>;
+    fn alt_generator() -> Self::GroupElement;
+    fn to_bytes_be(_: Self::GroupElement) -> Vec<u8>;
 }
 
-pub trait DLEqField:
-    Sized + Eq + Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self> + Neg<Output = Self>
-{
-    fn from_be_bytes(_: &[u8]) -> Self;
-    fn random<R: CryptoRng>(_: R) -> Self;
+pub trait DLEqField {
+    type Scalar: Copy + Debug + Sized + Eq + Add<Output = Self::Scalar> + Mul<Output = Self::Scalar>;
+    fn to_be_bytes(_: &Self::Scalar) -> Vec<u8>;
+    fn from_be_bytes(_: &[u8]) -> Self::Scalar;
+    fn random<R: CryptoRng + RngCore>(_: R) -> Self::Scalar;
 }
 
 impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
@@ -67,54 +72,55 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
         }
     }
 
-    pub fn prove(x: &[u8]) -> DLEqProof<Gp, Gq> {
-        let one = 1_i32.to_biguint().unwrap();
-        let two = 2_i32.to_biguint().unwrap();
-        let pow = (BITLEN_CHALLENGE + BITLEN_WITNESS + BITLEN_FAILURE)
-            .to_biguint()
-            .unwrap();
-        let k_max = two.modpow(&pow, &one); // this should be a bigint
+    #[allow(non_snake_case)]
+    pub fn prove(&self, x: &[u8]) -> DLEqProof<Gp, Gq> {
+        // verify 0 < x < 2 ** BITLEN_WITNESS
+        let x_uint = U256::from_be_byte_array(*GenericArray::from_slice(x));
+        let upper_bound = NonZero::new(U256::ONE.shl_vartime(BITLEN_WITNESS)).unwrap();
+        assert!(x_uint > U256::from(0u8) && x_uint < *upper_bound);
+
+        let xp = Gp::Field::from_be_bytes(x);
+        let xq = Gq::Field::from_be_bytes(x);
+
+        // calculate modulus for k value
+        let pow = BITLEN_CHALLENGE + BITLEN_WITNESS + BITLEN_FAILURE;
+        let modulus = NonZero::new(U256::ONE.shl_vartime(pow)).unwrap();
         let mut rng = rand::thread_rng();
-        let k_biguint = rng.gen_biguint_range(&one, &(&k_max - &one));
 
-        let tp = Gp::Scalar::random(&mut rng);
-        let tq = Gq::Scalar::random(&mut rng);
+        // random values
+        let tp = Gp::Field::random(&mut rng);
+        let tq = Gq::Field::random(&mut rng);
+        let rp = Gp::Field::random(&mut rng);
+        let rq = Gq::Field::random(&mut rng);
 
-        let k = k_biguint.to_bytes_be();
-        let kp = Gp::Scalar::from_be_bytes(&k);
-        let kq = Gq::Scalar::from_be_bytes(&k);
+        // calculate commitments: xG + rH
+        let Xp = (Gp::generator() * xp) + (Gp::alt_generator() * rp);
+        let Xq = (Gq::generator() * xq) + (Gq::alt_generator() * rq);
 
-        let Kp = Gp::generator() * kp + Gp::alt_generator() * &tp;
-        let Kq = Gq::generator() * kq + Gq::alt_generator() * &tq;
+        let (Kp, Kq, cp, cq, z) = loop {
+            let k = U256::random_mod(&mut OsRng, &modulus);
+            let k_bytes = k.to_be_byte_array();
+            let kp = Gp::Field::from_be_bytes(&k_bytes);
+            let kq = Gq::Field::from_be_bytes(&k_bytes);
 
-        let xp = Gp::Scalar::from_be_bytes(x);
-        let xq = Gq::Scalar::from_be_bytes(x);
-        let Yp = Gp::generator() * &xp;
-        let Yq = Gq::generator() * &xq;
+            let Kp = (Gp::generator() * kp) + (Gp::alt_generator() * tp);
+            let Kq = (Gq::generator() * kq) + (Gq::alt_generator() * tq);
 
-        let mut hasher = Sha256::new();
-        hasher.update(Gp::generator().to_bytes_be());
-        hasher.update(Gq::generator().to_bytes_be());
-        hasher.update(Gp::alt_generator().to_bytes_be());
-        hasher.update(Gq::alt_generator().to_bytes_be());
-        hasher.update(Kp.to_bytes_be());
-        hasher.update(Kq.to_bytes_be());
-        hasher.update(Yp.to_bytes_be());
-        hasher.update(Yq.to_bytes_be());
-        let res = hasher.finalize();
+            let c = challenge::<Gp, Gq>(Kp, Kq, Xp, Xq);
 
-        let c_unreduced = BigUint::from_bytes_be(&res);
-        let bitlen_commitment = BITLEN_CHALLENGE.to_biguint().unwrap();
-        let commitment_modulus = two.modpow(&bitlen_commitment, &one);
-        let c = c_unreduced.modpow(&one, &commitment_modulus);
+            let cp = Gp::Field::from_be_bytes(&c.to_be_byte_array());
+            let cq = Gq::Field::from_be_bytes(&c.to_be_byte_array());
 
-        let x_biguint = BigUint::from_bytes_be(x);
-        let z = k_biguint + &c * x_biguint;
+            let z = Wrapping(k) + (Wrapping(c) * Wrapping(x_uint));
+            let z = z.0;
 
-        let cp = Gp::Scalar::from_be_bytes(&c.to_bytes_be());
-        let cq = Gq::Scalar::from_be_bytes(&c.to_bytes_be());
-        let sp = tp + cp * xp;
-        let sq = tq + cq * xq;
+            if check_z(&z) {
+                break (Kp, Kq, cp, cq, z);
+            }
+        };
+
+        let sp = tp + (cp * rp);
+        let sq = tq + (cq * rq);
 
         DLEqProof {
             Kp: Kp,
@@ -122,14 +128,89 @@ impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProver<Gp, Gq> {
             z: z,
             sp: sp,
             sq: sq,
+            Xp: Xp,
+            Xq: Xq,
         }
     }
+}
+
+impl<Gp: DLEqGroup, Gq: DLEqGroup> DLEqProof<Gp, Gq> {
+    pub fn verify(&self) -> bool {
+        // recompute challenge
+        let c = challenge::<Gp, Gq>(self.Kp, self.Kq, self.Xp, self.Xq);
+
+        let cp = Gp::Field::from_be_bytes(&c.to_be_byte_array());
+        let cq = Gq::Field::from_be_bytes(&c.to_be_byte_array());
+
+        let zp = Gp::Field::from_be_bytes(&self.z.to_be_byte_array());
+        let zq = Gq::Field::from_be_bytes(&self.z.to_be_byte_array());
+
+        // 1. check Gp
+        let lhs = (Gp::generator() * zp) + (Gp::alt_generator() * self.sp);
+        let rhs = self.Kp + (self.Xp * cp);
+        if lhs != rhs {
+            return false;
+        }
+
+        // 2. check G
+        let lhs = Gq::generator() * zq + Gq::alt_generator() * self.sq;
+        let rhs = self.Kq + self.Xq * cq;
+        if lhs != rhs {
+            return false;
+        }
+
+        // 3. check z
+        check_z(&self.z)
+    }
+}
+
+#[allow(non_snake_case)]
+fn challenge<Gp: DLEqGroup, Gq: DLEqGroup>(
+    Kp: Gp::GroupElement,
+    Kq: Gq::GroupElement,
+    Xp: Gp::GroupElement,
+    Xq: Gq::GroupElement,
+) -> U256 {
+    let mut hasher = Sha256::new();
+    hasher.update(Gp::to_bytes_be(Gp::generator()));
+    hasher.update(Gq::to_bytes_be(Gq::generator()));
+    hasher.update(Gp::to_bytes_be(Gp::alt_generator()));
+    hasher.update(Gq::to_bytes_be(Gq::alt_generator()));
+    hasher.update(Gp::to_bytes_be(Kp));
+    hasher.update(Gq::to_bytes_be(Kq));
+    hasher.update(Gp::to_bytes_be(Xp));
+    hasher.update(Gq::to_bytes_be(Xq));
+    let res = hasher.finalize();
+
+    let c_unreduced = U256::from_be_byte_array(res);
+    let commitment_modulus = NonZero::new(U256::ONE.shl_vartime(BITLEN_CHALLENGE)).unwrap();
+    c_unreduced % &commitment_modulus
+}
+
+// check_z returns true if z is between [2^(b_x+b_c), 2^(b_x+b_c+b_f)-1], false otherwise
+fn check_z(z: &U256) -> bool {
+    let one = U256::ONE;
+    let pow_lower = BITLEN_CHALLENGE + BITLEN_WITNESS;
+    let pow_upper = BITLEN_CHALLENGE + BITLEN_WITNESS + BITLEN_FAILURE;
+    let lower: UInt<4> = one.shl_vartime(pow_lower);
+    let upper: UInt<4> = one.shl_vartime(pow_upper);
+    z >= &lower && z < &upper
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::secp256k1::Secp256k1Group;
+
+    use crypto_bigint::Encoding;
 
     #[test]
-    fn it_works() {}
+    fn dleq_prove_and_verify() {
+        let modulus = NonZero::new(U256::ONE.shl_vartime(BITLEN_WITNESS)).unwrap();
+        let x = U256::random_mod(&mut OsRng, &modulus);
+
+        let prover = DLEqProver::<Secp256k1Group, Secp256k1Group>::new();
+        let proof = prover.prove(&x.to_be_bytes());
+        assert!(proof.verify())
+    }
 }
