@@ -10,7 +10,7 @@ To generate a proof of a witness `0 < x < 2 ** 64`:
 
 ```rust
 use crypto_bigint::U64;
-use dleq-rs::{
+use dleq_rs::{
     DLEqProver,
     ed25519::Ed25519Group, 
     secp256k1::Secp256k1Group,
@@ -26,7 +26,7 @@ To generate a proof of a witness `0 < x < 2 ** 256`:
 
 ```rust
 use crypto_bigint::U64;
-use dleq-rs::{
+use dleq_rs::{
     DLEqProver,
     ed25519::Ed25519Group, 
     secp256k1::Secp256k1Group,
